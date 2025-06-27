@@ -1,0 +1,9 @@
+{
+	"BuildId": "43139311",
+	"Modules": 
+	{
+		"AssetStreamManager": "UnrealEditor-AssetStreamManager.dll",
+		"WorldGridStream": "UnrealEditor-WorldGridStream.dll",
+		"WorldGridStreamEditor": "UnrealEditor-WorldGridStreamEditor.dll"
+	}
+}

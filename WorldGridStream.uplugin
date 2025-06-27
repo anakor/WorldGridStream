@@ -1,0 +1,34 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "WorldGridStream",
+	"Description": "A dynamic streaming system that loads and unloads world actors based on grid-based partitioning for large-scale open worlds. Smarter worlds. Faster loading. Grid-based actor streaming for massive open environments.",
+	"Category": "Other",
+	"CreatedBy": "Lucas Corp",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "WorldGridStream",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "WorldGridStreamEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "AssetStreamManager",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
