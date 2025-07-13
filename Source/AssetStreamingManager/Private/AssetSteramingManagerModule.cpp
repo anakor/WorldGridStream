@@ -18,4 +18,3 @@ void FAssetStreamingManagerModule::ShutdownModule()
 #undef LOCTEXT_NAMESPACE
 	
 IMPLEMENT_MODULE(FAssetStreamingManagerModule, AssetStreamingManager)
-DEFINE_LOG_CATEGORY(LogAssetStreamingManager);
