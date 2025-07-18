@@ -7,276 +7,199 @@
 #include "TimerManager.h"
 #include "UObject/SoftObjectPtr.h"
 
-UAssetStreamingManager::UAssetStreamingManager()
+void UAssetStreamingManager::Initialize(FSubsystemCollectionBase& Collection)
 {
-	UnloadDelaySeconds = 5.0f;
+    UE_LOG(LogAssetStreamingManager, Log, TEXT("[AssetStreamingEngineSubsystem] Initialized"));
+
+    if (UnloadDelaySeconds < 0.0f)
+    {
+        UE_LOG(LogAssetStreamingManager, Error, TEXT("UnloadDelaySeconds cannot be a negative number. Setting it to 5 seconds."));
+        UnloadDelaySeconds = 5.0f;
+    }
 }
 
-UAssetStreamingManager::~UAssetStreamingManager()
+void UAssetStreamingManager::Deinitialize()
 {
-}
-
-void UAssetStreamingManager::Init(UWorld* InWorld)
-{
-	World = InWorld;
-	bIsActive = true;
-}
-
-void UAssetStreamingManager::Shutdown()
-{
-	bIsActive = false;
-	RegisteredAssets.Empty();
-	AssetRequestCount.Empty();
-	KeepAlive.Empty();
-	PendingUnloadArray.Empty();
+    RegisteredAssets.Empty();
+    AssetRequestCount.Empty();
+    KeepAlive.Empty();
+    UnloadTimers.Empty();
 }
 
 void UAssetStreamingManager::Tick(float DeltaTime)
 {
-	for (int32 i = PendingUnloadArray.Num() - 1; i >= 0; --i)
-	{
-		FPendingUnload& Entry = PendingUnloadArray[i];
-		Entry.Countdown -= DeltaTime;
+    TArray<FSoftObjectPath> ToUnload;
+    for (auto& Pair : UnloadTimers)
+    {
+        Pair.Value -= DeltaTime;
+        if (Pair.Value <= 0.f)
+        {
+            ToUnload.Add(Pair.Key);
+        }
+    }
 
-		if (Entry.Countdown <= 0.0f)
-		{
-			for (FAssetHandleStruct& AssetHandleStruct : Entry.Assets)
-			{
-				FSoftObjectPath Path = AssetHandleStruct.Asset.ToSoftObjectPath();
+    for (const FSoftObjectPath& Path : ToUnload)
+    {
+        UnloadTimers.Remove(Path);
 
-				if (!AssetRequestCount.Contains(Path))
-				{
-					KeepAlive.Remove(Path);
+        if (AssetRequestCount.Contains(Path))
+            continue;
 
-					TArray<TSharedRef<FStreamableHandle>> Handles;
-					if (StreamableManager.GetActiveHandles(Path, Handles, true))
-					{
-						for (auto& Handle : Handles)
-						{
-							Handle->CancelHandle();
-						}
-					}
-				}
-			}
-			PendingUnloadArray.RemoveAt(i);
-		}
-	}
+        KeepAlive.Remove(Path);
+
+        TArray<TSharedRef<FStreamableHandle>> Handles;
+        if (StreamableManager.GetActiveHandles(Path, Handles, true))
+        {
+            for (TSharedRef<FStreamableHandle> Handle : Handles)
+            {
+                Handle->CancelHandle();
+            }
+        }
+    }
 }
 
 TStatId UAssetStreamingManager::GetStatId() const
 {
-	RETURN_QUICK_DECLARE_CYCLE_STAT(UAssetStreamingManager, STATGROUP_Tickables);
+    RETURN_QUICK_DECLARE_CYCLE_STAT(UAssetStreamingManager, STATGROUP_Tickables);
 }
 
-bool UAssetStreamingManager::RequestAssetStreaming(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, const TScriptInterface<IAssetStreamingCallback>& AssetLoadedCallback, FGuid& OutAssetRequestId)
+bool UAssetStreamingManager::RequestAssetStreaming(
+    const TSoftObjectPtr<UObject>& Asset,
+    const TScriptInterface<IAssetStreamingCallback>& Callback,
+    FGuid& OutRequestId)
 {
-	// Invalidate the request id if there is nothing to stream.
-	if (AssetsToStream.Num() == 0)
-	{
-		OutAssetRequestId.Invalidate();
-		return false;
-	}
+    OutRequestId = FGuid::NewGuid();
+    StreamAsset(Asset, OutRequestId, Callback);
 
-	// Assign a new guid to the request.
-	OutAssetRequestId = FGuid::NewGuid();
-
-	UE_LOG(LogAssetStreamingManager, Verbose, TEXT("Request to stream %s asset(s) received. Request Id: %s"), *FString::FromInt(AssetsToStream.Num()), *OutAssetRequestId.ToString());
-	for (const TSoftObjectPtr<UObject> Asset : AssetsToStream)
-	{
-		StreamAsset(Asset, OutAssetRequestId, AssetLoadedCallback);
-	}
-
-	// Any asset streaming operation that passes assertions but still isn't valid will cause the request id to invalidate.
-	return OutAssetRequestId.IsValid();
+    return OutRequestId.IsValid();
 }
 
-bool UAssetStreamingManager::RequestAssetStreaming(const TSoftObjectPtr<UObject>& AssetToStream, const TScriptInterface<IAssetStreamingCallback>& AssetLoadedCallback, FGuid& OutAssetRequestId)
+bool UAssetStreamingManager::RequestAssetStreamingMultiple(
+    const TArray<TSoftObjectPtr<UObject>>& Assets,
+    const TScriptInterface<IAssetStreamingCallback>& Callback,
+    FGuid& OutRequestId)
 {
-	// Assign a new guid to the request.
-	OutAssetRequestId = FGuid::NewGuid();
-	StreamAsset(AssetToStream, OutAssetRequestId, AssetLoadedCallback);
+    if (Assets.Num() == 0)
+    {
+        OutRequestId.Invalidate();
+        return false;
+    }
 
-	return OutAssetRequestId.IsValid();
+    OutRequestId = FGuid::NewGuid();
+    for (TSoftObjectPtr<UObject> Asset : Assets)
+    {
+        StreamAsset(Asset, OutRequestId, Callback);
+    }
+
+    return OutRequestId.IsValid();
 }
 
-bool UAssetStreamingManager::ReleaseAssets(FGuid& RequestId)
+bool UAssetStreamingManager::ReleaseAsset(FGuid& RequestId)
 {
-	if (!RequestId.IsValid())
-	{
-		UE_LOG(LogAssetStreamingManager, Warning, TEXT("Attempted to release assets using an invalid Guid."));
-		return false;
-	}
+    if (!RequestId.IsValid() || !RegisteredAssets.Contains(RequestId))
+    {
+        RequestId.Invalidate();
+        return false;
+    }
 
-	if (!RegisteredAssets.Contains(RequestId))
-	{
-		UE_LOG(LogAssetStreamingManager, Warning, TEXT("Attempted to release assets using id '%s' but it leads to no assets."), *RequestId.ToString());
-		RequestId.Invalidate();
-		return false;
-	}
+    FAssetHandleArray& Assets = RegisteredAssets[RequestId];
 
-	FAssetHandleArray Assets = RegisteredAssets[RequestId];
+    for (int32 i = Assets.Num() - 1; i >= 0; --i)
+    {
+        const TSoftObjectPtr<UObject>& Asset = Assets[i].Asset;
+        const FSoftObjectPath Path = Asset.ToSoftObjectPath();
 
-	for (int i = Assets.Num() - 1; i >= 0; --i)
-	{
-		FAssetHandleStruct& AssetHandleStruct = Assets[i];
-		FSoftObjectPath Path = AssetHandleStruct.Asset.ToSoftObjectPath();
+        if (!AssetRequestCount.Contains(Path)) continue;
 
-		if (AssetRequestCount.Contains(Path))
-		{
-			AssetRequestCount[Path]--;
-			if (AssetRequestCount[Path] > 0)
-			{
-				Assets.RemoveAt(i);
-				continue;
-			}
-			else
-			{
-				AssetRequestCount.Remove(Path);
-			}
-		}
+        AssetRequestCount[Path]--;
 
-		if (KeepAlive.Contains(Path) && AssetHandleStruct.Handle != KeepAlive[Path])
-		{
-			AssetHandleStruct.Handle->CancelHandle();
-		}
-	}
+        if (AssetRequestCount[Path] > 0)
+        {
+            Assets.RemoveAt(i);
+        }
+        else
+        {
+            AssetRequestCount.Remove(Path);
+        }
 
-	RegisteredAssets.Remove(RequestId);
+        if (!KeepAlive.Contains(Path) || KeepAlive[Path] != Assets[i].Handle)
+        {
+            if (Assets[i].Handle.IsValid())
+            {
+                Assets[i].Handle->CancelHandle();
+            }
+        }
+    }
 
-	if (Assets.Num() > 0)
-	{
-		PendingUnloadArray.Add({ UnloadDelaySeconds, Assets });
-	}
+    RegisteredAssets.Remove(RequestId);
 
-	RequestId.Invalidate();
-	return true;
+    for (const FAssetHandleStruct& AssetHandleStrucdt : Assets)
+    {
+        const FSoftObjectPath Path = AssetHandleStrucdt.Asset.ToSoftObjectPath();
+        if (!UnloadTimers.Contains(Path))
+        {
+            UnloadTimers.Add(Path, UnloadDelaySeconds);
+        }
+    }
+
+    RequestId.Invalidate();
+    return true;
 }
 
-void UAssetStreamingManager::StreamAsset(const TSoftObjectPtr<UObject>& AssetToStream, const FGuid& RequestId, const TScriptInterface<IAssetStreamingCallback>& AssetLoadedCallback)
+bool UAssetStreamingManager::K2_RequestMultipleAssetStreaming(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, FGuid& OutAssetRequestId)
 {
-	// Request an asynchronous load of the asset, even if the asset is already loaded. We'll keep the handle.
-	FStreamableDelegate OnLoaded;
-	const bool bIsAssetLoaded = AssetToStream.IsValid();
-	OnLoaded.BindLambda([this, AssetToStream, AssetLoadedCallback, bIsAssetLoaded]() { HandleAssetLoaded(AssetToStream, AssetLoadedCallback, bIsAssetLoaded); });
-	TSharedPtr<FStreamableHandle> Handle = StreamableManager.RequestAsyncLoad(AssetToStream.ToSoftObjectPath(), OnLoaded, FStreamableManager::DefaultAsyncLoadPriority, true);
-
-	// Register the asset and its handle to the request Id.
-	RegisterAssetToId(AssetToStream, Handle, RequestId);
-
-	// We need to keep one handle alive at all times so that we choose when to unload the asset.
-	// To do this, we keep the first handle for each asset and never unload it until we really want to release the asset.
-	if (!KeepAlive.Contains(AssetToStream.ToSoftObjectPath()))
-	{
-		KeepAlive.Add(AssetToStream.ToSoftObjectPath(), Handle);
-	}
-
-	// Increment the number of references for the asset.
-	IncrementAssetReference(AssetToStream);
+    return RequestAssetStreamingMultiple(AssetsToStream, nullptr, OutAssetRequestId);
 }
 
-void UAssetStreamingManager::RegisterAssetToId(const TSoftObjectPtr<UObject>& Asset, const TSharedPtr<FStreamableHandle> Handle, const FGuid& Id)
+bool UAssetStreamingManager::K2_RequestMultipleAssetStreamingWithCallback(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, const TScriptInterface<IAssetStreamingCallback>& AssetLoadedCallback, FGuid& OutAssetRequestId)
 {
-	FAssetHandleStruct AssetHandleStruct = FAssetHandleStruct(Asset, Handle);
-
-	if (RegisteredAssets.Contains(Id))
-	{
-		if (RegisteredAssets[Id].Contains(AssetHandleStruct))
-		{
-			UE_LOG(LogAssetStreamingManager, Error, TEXT("Attempted to register asset '%s' to Id '%s' but it already exists there."), *Asset.GetAssetName(), *Id.ToString());
-			return;
-		}
-
-		RegisteredAssets[Id].Add(AssetHandleStruct
-		);
-	}
-	else
-	{
-		FAssetHandleArray Array;
-		Array.Add(AssetHandleStruct);
-		RegisteredAssets.Add(Id, Array);
-	}
-	UE_LOG(LogAssetStreamingManager, Verbose, TEXT("Registered asset '%s' to Id '%s'."), *Asset.GetAssetName(), *Id.ToString());
-
+    return RequestAssetStreamingMultiple(AssetsToStream, AssetLoadedCallback, OutAssetRequestId);
 }
 
-void UAssetStreamingManager::IncrementAssetReference(const TSoftObjectPtr<UObject>& Asset)
+bool UAssetStreamingManager::K2_RequestAssetStreaming(const TSoftObjectPtr<UObject>& AssetToStream, FGuid& OutAssetRequestId)
 {
-	checkf(!Asset.IsNull(), TEXT("Cannot increment asset reference of null asset."));
-	FSoftObjectPath AssetPath = Asset.ToSoftObjectPath();
-
-	if (AssetRequestCount.Contains(AssetPath))
-	{
-		AssetRequestCount[AssetPath]++;
-	}
-	else
-	{
-		AssetRequestCount.Add(AssetPath, 1);
-	}
+    return RequestAssetStreaming(AssetToStream, nullptr, OutAssetRequestId);
 }
 
-void UAssetStreamingManager::HandleAssetLoaded(const TSoftObjectPtr<UObject>& LoadedAsset, const TScriptInterface<IAssetStreamingCallback>& AssetLoadedCallback, const bool& bAlreadyLoaded)
+bool UAssetStreamingManager::K2_RequestAssetStreamingWithCallback(const TSoftObjectPtr<UObject>& AssetToStream, const TScriptInterface<IAssetStreamingCallback>& AssetLoadedCallback, FGuid& OutAssetRequestId)
 {
-	if (LoadedAsset.IsValid() && AssetLoadedCallback.GetObject()->IsValidLowLevel())
-	{
-		IAssetStreamingCallback::Execute_OnAssetLoaded(AssetLoadedCallback.GetObject(), LoadedAsset, bAlreadyLoaded);
-	}
+    return RequestAssetStreaming(AssetToStream, AssetLoadedCallback, OutAssetRequestId);
 }
 
-void UAssetStreamingManager::ScheduleAssetUnloading(const FAssetHandleArray& Assets)
+bool UAssetStreamingManager::K2_ReleaseAssets(UPARAM(Ref) FGuid& RequestId)
 {
-	if (Assets.Num() == 0)
-	{
-		UE_LOG(LogAssetStreamingManager, Warning, TEXT("Attempted to schedule asset unloading with an empty array."));
-		return;
-	}
-
-	FTimerManager& TimerManager = GetWorld()->GetTimerManager();
-	FTimerHandle Handle;
-	FTimerDelegate Delegate;
-	Delegate.BindLambda([this, Assets]() { FinalUnloadAssets(Assets); });
-
-	TimerManager.SetTimer(Handle, Delegate, UnloadDelaySeconds, false);
+    return ReleaseAsset(RequestId);
 }
 
-void UAssetStreamingManager::FinalUnloadAssets(const FAssetHandleArray& Assets)
+void UAssetStreamingManager::StreamAsset(const TSoftObjectPtr<UObject>& Asset, const FGuid& RequestId, const TScriptInterface<IAssetStreamingCallback>& Callback)
 {
-	// If this somehow runs while the game is quitting, ignore.
-	if (!this) return;
+    if (Asset.IsNull()) return;
 
-	int32 UnloadedAssetsCount = 0;
-	for (FAssetHandleStruct AssetHandleStruct : Assets)
-	{
-		TSoftObjectPtr<UObject> Asset = AssetHandleStruct.Asset;
-		checkf(!Asset.IsNull(), TEXT("Attempted to unload null asset pointer."));
+    FStreamableDelegate OnLoaded;
+    const bool bIsAssetLoaded = Asset.IsValid();
+    OnLoaded.BindLambda([this, Asset, Callback, bIsAssetLoaded]() { HandleAssetLoaded(Asset, Callback, bIsAssetLoaded); });
+    TSharedPtr<FStreamableHandle> Handle = StreamableManager.RequestAsyncLoad(Asset.ToSoftObjectPath(), OnLoaded, FStreamableManager::DefaultAsyncLoadPriority, true);
 
-		FSoftObjectPath AssetPath = Asset.ToSoftObjectPath();
+    if (!RegisteredAssets.Contains(RequestId))
+    {
+        RegisteredAssets.Add(RequestId, {});
+    }
+    RegisteredAssets[RequestId].Add(FAssetHandleStruct(Asset, Handle));
 
-		// Check if a new request to this asset was made. If so, we won't unload it.
-		if (AssetRequestCount.Contains(AssetPath)) continue;
+    if (!KeepAlive.Contains(Asset.ToSoftObjectPath()))
+    {
+        KeepAlive.Add(Asset.ToSoftObjectPath(), Handle);
+    }
 
-		UE_LOG(LogAssetStreamingManager, VeryVerbose, TEXT("Unloading asset '%s'."), *Asset.GetAssetName());
-
-		// Remove the handle from the KeepAlive array.
-		KeepAlive.Remove(AssetPath);
-
-		// Get the active handles for the asset and cancel them. Normally, we should only find one.
-		// Cancelling will also stop them from completing if they haven't been loaded yet. The callback won't be called.
-		TArray<TSharedRef<FStreamableHandle>> ActiveHandles;
-		if (StreamableManager.GetActiveHandles(AssetPath, ActiveHandles, true))
-		{
-			for (TSharedRef<FStreamableHandle> Handle : ActiveHandles)
-			{
-				Handle.Get().CancelHandle();
-			}
-
-			UnloadedAssetsCount++;
-		}
-		else
-		{
-			UE_LOG(LogAssetStreamingManager, Error, TEXT("Attempted to unload asset '%s' but no active handles were found. We should at least find one?"), *Asset.GetAssetName());
-		}
-	}
-
-	UE_LOG(LogAssetStreamingManager, Verbose, TEXT("Finally unloaded %s assets."), *FString::FromInt(UnloadedAssetsCount));
-
+    AssetRequestCount.FindOrAdd(Asset.ToSoftObjectPath())++;
 }
+
+void UAssetStreamingManager::HandleAssetLoaded(const TSoftObjectPtr<UObject>& Asset, const TScriptInterface<IAssetStreamingCallback>& Callback, bool bAlreadyLoaded)
+{
+    if (Asset.IsValid() && Callback.GetObject() && Callback.GetObject()->IsValidLowLevel())
+    {
+        IAssetStreamingCallback::Execute_OnAssetLoaded(Callback.GetObject(), Asset, bAlreadyLoaded);
+    }
+}
+
+
