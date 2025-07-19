@@ -24,6 +24,11 @@
 			"Name": "WorldGridStreamEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "AssetStreamingManager",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
 		}
 	]
 }
