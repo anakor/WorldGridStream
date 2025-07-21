@@ -107,7 +107,7 @@ bool UAssetStreamingManager::RequestAssetsStreaming(const TArray<TSoftObjectPtr<
         return false;
     }
 
-	OutRequestId = FGuid::NewGuid(); //이거 고민해봐야 함. 불어서 할지 아니면 그냥 하나로 할지. UE도 풀어서 하고 있어서 풀어서 가는 쪽을 생각해야 할 듯
+	OutRequestId = FGuid::NewGuid();
     for (TSoftObjectPtr<UObject> Asset : Assets)
     {
         StreamAsset(Asset, OutRequestId, Callback);
