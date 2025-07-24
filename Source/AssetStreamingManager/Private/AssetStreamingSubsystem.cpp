@@ -1,6 +1,4 @@
-
 #include "AssetStreamingSubsystem.h"
-#include "AssetStreamingCallback.h"
 #include "AssetStreamingManagerDebug.h"
 
 #include "Engine/World.h"
@@ -11,35 +9,35 @@ DECLARE_CYCLE_STAT(TEXT("AssetStreamingManager Tick"), STAT_ASMTick, STATGROUP_A
 
 namespace StreamingManager
 {
-	float UnloadDelaySeconds = 5.0f;
-	FAutoConsoleVariableRef CVarUnloadDelaySeconds(TEXT("StreamingManager.UnloadDelaySeconds")
+    float UnloadDelaySeconds = 5.0f;
+    FAutoConsoleVariableRef CVarUnloadDelaySeconds(TEXT("StreamingManager.UnloadDelaySeconds")
         , UnloadDelaySeconds
-		, TEXT("Seconds to delay before asset unload")
-		, ECVF_ReadOnly);
+        , TEXT("Seconds to delay before asset unload")
+        , ECVF_ReadOnly);
 
-	float LoadDelaySeconds = 0.017f; // 1 / 60 FPS
-	FAutoConsoleVariableRef CVarLoadDelaySeconds(TEXT("StreamingManager.LoadDelaySeconds")
+    float LoadDelaySeconds = 0.017f; // 1 / 60 FPS
+    FAutoConsoleVariableRef CVarLoadDelaySeconds(TEXT("StreamingManager.LoadDelaySeconds")
         , LoadDelaySeconds
-		, TEXT("Seconds to delay before asset load")
-		, ECVF_ReadOnly);
+        , TEXT("Seconds to delay before asset load")
+        , ECVF_ReadOnly);
 
     int32 MaxAssetsToLoadPerTick = 20;
-	FAutoConsoleVariableRef CVarMaxAssetsToLoadAtOnce(TEXT("StreamingManager.MaxAssetsToLoadPerTick")
+    FAutoConsoleVariableRef CVarMaxAssetsToLoadAtOnce(TEXT("StreamingManager.MaxAssetsToLoadPerTick")
         , MaxAssetsToLoadPerTick
-		, TEXT("Maximum number of assets that can be loaded at once per tick")
-		, ECVF_ReadOnly);
+        , TEXT("Maximum number of assets that can be loaded at once per tick")
+        , ECVF_ReadOnly);
 }
 
 void UAssetStreamingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
-	Super::Initialize(Collection);
+    Super::Initialize(Collection);
 
     UE_LOG(LogAssetStreamingManager, Log, TEXT("[UAssetStreamingSystem] Initialized"));
 }
 
 void UAssetStreamingSubsystem::Deinitialize()
 {
-	Super::Deinitialize();
+    Super::Deinitialize();
 
     UE_LOG(LogAssetStreamingManager, Log, TEXT("[UAssetStreamingSystem] Deinitialize"));
 
@@ -51,10 +49,10 @@ void UAssetStreamingSubsystem::Deinitialize()
 
 void UAssetStreamingSubsystem::Tick(float DeltaTime)
 {
-	SCOPE_CYCLE_COUNTER(STAT_ASMTick);
-	TRACE_CPUPROFILER_EVENT_SCOPE(UAssetStreamingSubsystem::Tick);
-	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(AssetStreamingManager);
-	LLM_SCOPE_BYNAME(TEXT("AssetStreamingManager"));
+    SCOPE_CYCLE_COUNTER(STAT_ASMTick);
+    TRACE_CPUPROFILER_EVENT_SCOPE(UAssetStreamingSubsystem::Tick);
+    CSV_SCOPED_TIMING_STAT_EXCLUSIVE(AssetStreamingManager);
+    LLM_SCOPE_BYNAME(TEXT("AssetStreamingManager"));
 
     TArray<FSoftObjectPath> ToUnload;
     for (auto& Pair : UnloadTimers)
@@ -91,29 +89,30 @@ TStatId UAssetStreamingSubsystem::GetStatId() const
     RETURN_QUICK_DECLARE_CYCLE_STAT(UAssetStreamingSubsystem, STATGROUP_Tickables);
 }
 
-bool UAssetStreamingSubsystem::RequestAssetStreaming(const TSoftObjectPtr<UObject>& Asset, FGuid& OutRequestId)
+bool UAssetStreamingSubsystem::RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId)
 {
     OutRequestId = FGuid::NewGuid();
-    StreamAsset(Asset, OutRequestId);
+    StreamAsset(AssetPath, OutRequestId);
 
     return OutRequestId.IsValid();
 }
 
-bool UAssetStreamingSubsystem::RequestAssetsStreaming(const TArray<TSoftObjectPtr<UObject>>& Assets, FGuid& OutRequestId)
+bool UAssetStreamingSubsystem::RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetPaths, TArray<FGuid>& OutRequestId)
 {
-    if (Assets.Num() == 0)
+    if (AssetPaths.Num() == 0)
     {
-        OutRequestId.Invalidate();
+        OutRequestId.Empty();
         return false;
     }
 
-	OutRequestId = FGuid::NewGuid();
-    for (TSoftObjectPtr<UObject> Asset : Assets)
+    for (const FSoftObjectPath& AssetPath : AssetPaths)
     {
-        StreamAsset(Asset, OutRequestId);
+		FGuid RequestId = FGuid::NewGuid();
+		OutRequestId.Add(RequestId);
+        StreamAsset(AssetPath, RequestId);
     }
 
-    return OutRequestId.IsValid();
+    return true;
 }
 
 bool UAssetStreamingSubsystem::ReleaseAsset(FGuid& RequestId)
@@ -128,8 +127,7 @@ bool UAssetStreamingSubsystem::ReleaseAsset(FGuid& RequestId)
 
     for (int32 i = Assets.Num() - 1; i >= 0; --i)
     {
-        const TSoftObjectPtr<UObject>& Asset = Assets[i].Asset;
-        const FSoftObjectPath Path = Asset.ToSoftObjectPath();
+        const FSoftObjectPath Path = Assets[i].Asset;
 
         if (!AssetRequestCount.Contains(Path)) continue;
 
@@ -155,9 +153,9 @@ bool UAssetStreamingSubsystem::ReleaseAsset(FGuid& RequestId)
 
     RegisteredAssets.Remove(RequestId);
 
-    for (const FAssetHandleStruct& AssetHandleStrucdt : Assets)
+    for (const FAssetHandleStruct& AssetHandleStruct : Assets)
     {
-        const FSoftObjectPath Path = AssetHandleStrucdt.Asset.ToSoftObjectPath();
+        const FSoftObjectPath Path = AssetHandleStruct.Asset;
         if (!UnloadTimers.Contains(Path))
         {
             UnloadTimers.Add(Path, StreamingManager::CVarUnloadDelaySeconds->GetFloat());
@@ -168,22 +166,22 @@ bool UAssetStreamingSubsystem::ReleaseAsset(FGuid& RequestId)
     return true;
 }
 
-bool UAssetStreamingSubsystem::K2_RequestAssetsStreaming(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, FGuid& OutAssetRequestId)
+bool UAssetStreamingSubsystem::K2_RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetsToStream, TArray<FGuid>& OutAssetRequestId)
 {
     return RequestAssetsStreaming(AssetsToStream, OutAssetRequestId);
 }
 
-bool UAssetStreamingSubsystem::K2_RequestAssetsStreamingWithCallback(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream,  FGuid& OutAssetRequestId)
+bool UAssetStreamingSubsystem::K2_RequestAssetsStreamingWithCallback(const TArray<FSoftObjectPath>& AssetsToStream, TArray<FGuid>& OutAssetRequestId)
 {
     return RequestAssetsStreaming(AssetsToStream, OutAssetRequestId);
 }
 
-bool UAssetStreamingSubsystem::K2_RequestAssetStreaming(const TSoftObjectPtr<UObject>& AssetToStream, FGuid& OutAssetRequestId)
+bool UAssetStreamingSubsystem::K2_RequestAssetStreaming(const FSoftObjectPath& AssetToStream, FGuid& OutAssetRequestId)
 {
     return RequestAssetStreaming(AssetToStream, OutAssetRequestId);
 }
 
-bool UAssetStreamingSubsystem::K2_RequestAssetStreamingWithCallback(const TSoftObjectPtr<UObject>& AssetToStream,  FGuid& OutAssetRequestId)
+bool UAssetStreamingSubsystem::K2_RequestAssetStreamingWithCallback(const FSoftObjectPath& AssetToStream, FGuid& OutAssetRequestId)
 {
     return RequestAssetStreaming(AssetToStream, OutAssetRequestId);
 }
@@ -193,38 +191,39 @@ bool UAssetStreamingSubsystem::K2_ReleaseAssets(UPARAM(Ref) FGuid& RequestId)
     return ReleaseAsset(RequestId);
 }
 
-void UAssetStreamingSubsystem::StreamAsset(const TSoftObjectPtr<UObject>& Asset, const FGuid& RequestId)
+void UAssetStreamingSubsystem::StreamAsset(const FSoftObjectPath& AssetPath, const FGuid& RequestId)
 {
-    if (Asset.IsNull()) return;
+    if (AssetPath.IsNull()) return;
 
-    const bool bIsAssetLoaded = Asset.IsValid();
+    const bool bIsAssetLoaded = StreamableManager.IsAsyncLoadComplete(AssetPath);
     FStreamableDelegate OnLoaded;
-    OnLoaded.BindLambda([WeakThis = MakeWeakObjectPtr(this), Asset, bIsAssetLoaded]()
-    {
-        if (WeakThis.IsValid())
+    OnLoaded.BindLambda([WeakThis = MakeWeakObjectPtr(this), AssetPath, bIsAssetLoaded]()
         {
-            WeakThis->HandleAssetLoaded(Asset, bIsAssetLoaded);
-        }
-    });
+            if (WeakThis.IsValid())
+            {
+                WeakThis->HandleAssetLoaded(AssetPath, bIsAssetLoaded);
+            }
+        });
 
     TSharedPtr<FStreamableHandle> Handle = StreamableManager.RequestAsyncLoad(
-        Asset.ToSoftObjectPath(), OnLoaded, FStreamableManager::DefaultAsyncLoadPriority, true);
+        AssetPath, OnLoaded, FStreamableManager::DefaultAsyncLoadPriority, true);
 
     RegisteredAssets.FindOrAdd(RequestId);
-    RegisteredAssets[RequestId].Add(FAssetHandleStruct(Asset, Handle));
+    RegisteredAssets[RequestId].Add(FAssetHandleStruct(AssetPath, Handle));
 
-    if (!KeepAlive.Contains(Asset.ToSoftObjectPath()))
+    if (!KeepAlive.Contains(AssetPath))
     {
-        KeepAlive.Add(Asset.ToSoftObjectPath(), Handle);
+        KeepAlive.Add(AssetPath, Handle);
     }
 
-    AssetRequestCount.FindOrAdd(Asset.ToSoftObjectPath())++;
+    AssetRequestCount.FindOrAdd(AssetPath)++;
 }
 
-void UAssetStreamingSubsystem::HandleAssetLoaded(const TSoftObjectPtr<UObject>& Asset, bool bAlreadyLoaded)
+void UAssetStreamingSubsystem::HandleAssetLoaded(const FSoftObjectPath& AssetPath, bool bAlreadyLoaded)
 {
-    if (Asset.IsValid())
+    UObject* LoadedAsset = AssetPath.ResolveObject();
+    if (LoadedAsset)
     {
-        OnAssetLoaded.Broadcast(Asset.Get(), bAlreadyLoaded);
+        OnAssetLoaded.Broadcast(LoadedAsset, bAlreadyLoaded);
     }
 }

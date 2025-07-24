@@ -17,7 +17,7 @@ public:
 		, Handle(nullptr)
 	{}
 
-	FAssetHandleStruct(const TSoftObjectPtr<UObject>& InAsset, const TSharedPtr<FStreamableHandle>& InHandle)
+	FAssetHandleStruct(const FSoftObjectPath& InAsset, const TSharedPtr<FStreamableHandle>& InHandle)
 		: Asset(InAsset)
 		, Handle(InHandle)
 	{}
@@ -27,6 +27,6 @@ public:
 		return Asset == RHS.Asset;
 	}
 
-	TSoftObjectPtr<UObject> Asset;
+	FSoftObjectPath Asset;
 	TSharedPtr<FStreamableHandle> Handle;
 };

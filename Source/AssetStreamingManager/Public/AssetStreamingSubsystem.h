@@ -17,8 +17,8 @@ UCLASS()
 class UAssetStreamingSubsystem : public UEngineSubsystem, public FTickableGameObject
 {
     GENERATED_BODY()
-    
-//Variable
+
+    //Variable
 public:
 protected:
     FStreamableManager StreamableManager;
@@ -31,9 +31,9 @@ private:
 
 public:
     UPROPERTY(BlueprintAssignable, Category = "Asset Streaming Events")
-	FOnAssetLoadedBP OnAssetLoaded;
+    FOnAssetLoadedBP OnAssetLoaded;
 
-//Function
+    //Function
 public:
     ASSETSTREAMINGMANAGER_API virtual void Initialize(FSubsystemCollectionBase& Collection) override;
     ASSETSTREAMINGMANAGER_API virtual void Deinitialize() override;
@@ -43,28 +43,28 @@ public:
     ASSETSTREAMINGMANAGER_API virtual TStatId GetStatId() const override;
     ASSETSTREAMINGMANAGER_API virtual bool IsTickable() const override { return true; }
 
-    ASSETSTREAMINGMANAGER_API bool RequestAssetStreaming(const TSoftObjectPtr<UObject>& Asset, FGuid& OutRequestId);
-    ASSETSTREAMINGMANAGER_API bool RequestAssetsStreaming(const TArray<TSoftObjectPtr<UObject>>& Assets, FGuid& OutRequestId);
+    ASSETSTREAMINGMANAGER_API bool RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId);
+    ASSETSTREAMINGMANAGER_API bool RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetPaths, TArray<FGuid>& OutRequestId);
     ASSETSTREAMINGMANAGER_API bool ReleaseAsset(FGuid& RequestId);
 
-// Blueprint
+    // Blueprint
 protected:
     UFUNCTION(BlueprintCallable, DisplayName = "Request Assets", Category = "Asset Streaming Functions")
-    bool K2_RequestAssetsStreaming(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, FGuid& OutAssetRequestId);
+    bool K2_RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetsToStream, TArray<FGuid>& OutAssetRequestId);
 
     UFUNCTION(BlueprintCallable, DisplayName = "Request Assets w/Callback", Category = "Asset Streaming Functions")
-    bool K2_RequestAssetsStreamingWithCallback(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, FGuid& OutAssetRequestId);
+    bool K2_RequestAssetsStreamingWithCallback(const TArray<FSoftObjectPath>& AssetsToStream, TArray<FGuid>& OutAssetRequestId);
 
     UFUNCTION(BlueprintCallable, DisplayName = "Request Asset Streaming", Category = "Asset Streaming Functions")
-    bool K2_RequestAssetStreaming(const TSoftObjectPtr<UObject>& AssetToStream, FGuid& OutAssetRequestId);
+    bool K2_RequestAssetStreaming(const FSoftObjectPath& AssetToStream, FGuid& OutAssetRequestId);
 
     UFUNCTION(BlueprintCallable, DisplayName = "Request Asset Streaming w/Callback", Category = "Asset Streaming Functions")
-    bool K2_RequestAssetStreamingWithCallback(const TSoftObjectPtr<UObject>& AssetToStream, FGuid& OutAssetRequestId);
+    bool K2_RequestAssetStreamingWithCallback(const FSoftObjectPath& AssetToStream, FGuid& OutAssetRequestId);
 
     UFUNCTION(BlueprintCallable, DisplayName = "Release Assets", Category = "Asset Streaming Functions")
     bool K2_ReleaseAssets(UPARAM(Ref) FGuid& RequestId);
 
 private:
-    void StreamAsset(const TSoftObjectPtr<UObject>& Asset, const FGuid& RequestId);
-    void HandleAssetLoaded(const TSoftObjectPtr<UObject>& Asset, bool bAlreadyLoaded);
+    void StreamAsset(const FSoftObjectPath& AssetPath, const FGuid& RequestId);
+    void HandleAssetLoaded(const FSoftObjectPath& AssetPath, bool bAlreadyLoaded);
 };
