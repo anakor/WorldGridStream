@@ -1,5 +1,5 @@
 
-#include "AssetStreamingManager.h"
+#include "AssetStreamingSubsystem.h"
 #include "AssetStreamingCallback.h"
 #include "AssetStreamingManagerDebug.h"
 
@@ -30,18 +30,18 @@ namespace StreamingManager
 		, ECVF_ReadOnly);
 }
 
-void UAssetStreamingManager::Initialize(FSubsystemCollectionBase& Collection)
+void UAssetStreamingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
-    UE_LOG(LogAssetStreamingManager, Log, TEXT("[UAssetStreamingManager] Initialized"));
+    UE_LOG(LogAssetStreamingManager, Log, TEXT("[UAssetStreamingSystem] Initialized"));
 }
 
-void UAssetStreamingManager::Deinitialize()
+void UAssetStreamingSubsystem::Deinitialize()
 {
 	Super::Deinitialize();
 
-    UE_LOG(LogAssetStreamingManager, Log, TEXT("[UAssetStreamingManager] Deinitialize"));
+    UE_LOG(LogAssetStreamingManager, Log, TEXT("[UAssetStreamingSystem] Deinitialize"));
 
     RegisteredAssets.Empty();
     AssetRequestCount.Empty();
@@ -49,10 +49,10 @@ void UAssetStreamingManager::Deinitialize()
     UnloadTimers.Empty();
 }
 
-void UAssetStreamingManager::Tick(float DeltaTime)
+void UAssetStreamingSubsystem::Tick(float DeltaTime)
 {
 	SCOPE_CYCLE_COUNTER(STAT_ASMTick);
-	TRACE_CPUPROFILER_EVENT_SCOPE(UAssetStreamingManager::Tick);
+	TRACE_CPUPROFILER_EVENT_SCOPE(UAssetStreamingSubsystem::Tick);
 	CSV_SCOPED_TIMING_STAT_EXCLUSIVE(AssetStreamingManager);
 	LLM_SCOPE_BYNAME(TEXT("AssetStreamingManager"));
 
@@ -86,20 +86,20 @@ void UAssetStreamingManager::Tick(float DeltaTime)
     }
 }
 
-TStatId UAssetStreamingManager::GetStatId() const
+TStatId UAssetStreamingSubsystem::GetStatId() const
 {
-    RETURN_QUICK_DECLARE_CYCLE_STAT(UAssetStreamingManager, STATGROUP_Tickables);
+    RETURN_QUICK_DECLARE_CYCLE_STAT(UAssetStreamingSubsystem, STATGROUP_Tickables);
 }
 
-bool UAssetStreamingManager::RequestAssetStreaming(const TSoftObjectPtr<UObject>& Asset, const TScriptInterface<IAssetStreamingCallback>& Callback, FGuid& OutRequestId)
+bool UAssetStreamingSubsystem::RequestAssetStreaming(const TSoftObjectPtr<UObject>& Asset, FGuid& OutRequestId)
 {
     OutRequestId = FGuid::NewGuid();
-    StreamAsset(Asset, OutRequestId, Callback);
+    StreamAsset(Asset, OutRequestId);
 
     return OutRequestId.IsValid();
 }
 
-bool UAssetStreamingManager::RequestAssetsStreaming(const TArray<TSoftObjectPtr<UObject>>& Assets, const TScriptInterface<IAssetStreamingCallback>& Callback, FGuid& OutRequestId)
+bool UAssetStreamingSubsystem::RequestAssetsStreaming(const TArray<TSoftObjectPtr<UObject>>& Assets, FGuid& OutRequestId)
 {
     if (Assets.Num() == 0)
     {
@@ -110,13 +110,13 @@ bool UAssetStreamingManager::RequestAssetsStreaming(const TArray<TSoftObjectPtr<
 	OutRequestId = FGuid::NewGuid();
     for (TSoftObjectPtr<UObject> Asset : Assets)
     {
-        StreamAsset(Asset, OutRequestId, Callback);
+        StreamAsset(Asset, OutRequestId);
     }
 
     return OutRequestId.IsValid();
 }
 
-bool UAssetStreamingManager::ReleaseAsset(FGuid& RequestId)
+bool UAssetStreamingSubsystem::ReleaseAsset(FGuid& RequestId)
 {
     if (!RequestId.IsValid() || !RegisteredAssets.Contains(RequestId))
     {
@@ -168,45 +168,47 @@ bool UAssetStreamingManager::ReleaseAsset(FGuid& RequestId)
     return true;
 }
 
-bool UAssetStreamingManager::K2_RequestAssetsStreaming(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, FGuid& OutAssetRequestId)
+bool UAssetStreamingSubsystem::K2_RequestAssetsStreaming(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, FGuid& OutAssetRequestId)
 {
-    return RequestAssetsStreaming(AssetsToStream, nullptr, OutAssetRequestId);
+    return RequestAssetsStreaming(AssetsToStream, OutAssetRequestId);
 }
 
-bool UAssetStreamingManager::K2_RequestAssetsStreamingWithCallback(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream, const TScriptInterface<IAssetStreamingCallback>& AssetLoadedCallback, FGuid& OutAssetRequestId)
+bool UAssetStreamingSubsystem::K2_RequestAssetsStreamingWithCallback(const TArray<TSoftObjectPtr<UObject>>& AssetsToStream,  FGuid& OutAssetRequestId)
 {
-    return RequestAssetsStreaming(AssetsToStream, AssetLoadedCallback, OutAssetRequestId);
+    return RequestAssetsStreaming(AssetsToStream, OutAssetRequestId);
 }
 
-bool UAssetStreamingManager::K2_RequestAssetStreaming(const TSoftObjectPtr<UObject>& AssetToStream, FGuid& OutAssetRequestId)
+bool UAssetStreamingSubsystem::K2_RequestAssetStreaming(const TSoftObjectPtr<UObject>& AssetToStream, FGuid& OutAssetRequestId)
 {
-    return RequestAssetStreaming(AssetToStream, nullptr, OutAssetRequestId);
+    return RequestAssetStreaming(AssetToStream, OutAssetRequestId);
 }
 
-bool UAssetStreamingManager::K2_RequestAssetStreamingWithCallback(const TSoftObjectPtr<UObject>& AssetToStream, const TScriptInterface<IAssetStreamingCallback>& AssetLoadedCallback, FGuid& OutAssetRequestId)
+bool UAssetStreamingSubsystem::K2_RequestAssetStreamingWithCallback(const TSoftObjectPtr<UObject>& AssetToStream,  FGuid& OutAssetRequestId)
 {
-    return RequestAssetStreaming(AssetToStream, AssetLoadedCallback, OutAssetRequestId);
+    return RequestAssetStreaming(AssetToStream, OutAssetRequestId);
 }
 
-bool UAssetStreamingManager::K2_ReleaseAssets(UPARAM(Ref) FGuid& RequestId)
+bool UAssetStreamingSubsystem::K2_ReleaseAssets(UPARAM(Ref) FGuid& RequestId)
 {
     return ReleaseAsset(RequestId);
 }
 
-void UAssetStreamingManager::StreamAsset(const TSoftObjectPtr<UObject>& Asset, const FGuid& RequestId, const TScriptInterface<IAssetStreamingCallback>& Callback)
+void UAssetStreamingSubsystem::StreamAsset(const TSoftObjectPtr<UObject>& Asset, const FGuid& RequestId)
 {
     if (Asset.IsNull()) return;
 
-    FStreamableDelegate OnLoaded;
     const bool bIsAssetLoaded = Asset.IsValid();
-    OnLoaded.BindLambda([WeakThis = MakeWeakObjectPtr(this), Asset, Callback, bIsAssetLoaded]()
+    FStreamableDelegate OnLoaded;
+    OnLoaded.BindLambda([WeakThis = MakeWeakObjectPtr(this), Asset, bIsAssetLoaded]()
     {
-		if (true == WeakThis.IsValid())
+        if (WeakThis.IsValid())
         {
-            WeakThis->HandleAssetLoaded(Asset, Callback, bIsAssetLoaded);
+            WeakThis->HandleAssetLoaded(Asset, bIsAssetLoaded);
         }
     });
-    TSharedPtr<FStreamableHandle> Handle = StreamableManager.RequestAsyncLoad(Asset.ToSoftObjectPath(), OnLoaded, FStreamableManager::DefaultAsyncLoadPriority, true);
+
+    TSharedPtr<FStreamableHandle> Handle = StreamableManager.RequestAsyncLoad(
+        Asset.ToSoftObjectPath(), OnLoaded, FStreamableManager::DefaultAsyncLoadPriority, true);
 
     RegisteredAssets.FindOrAdd(RequestId);
     RegisteredAssets[RequestId].Add(FAssetHandleStruct(Asset, Handle));
@@ -219,12 +221,10 @@ void UAssetStreamingManager::StreamAsset(const TSoftObjectPtr<UObject>& Asset, c
     AssetRequestCount.FindOrAdd(Asset.ToSoftObjectPath())++;
 }
 
-void UAssetStreamingManager::HandleAssetLoaded(const TSoftObjectPtr<UObject>& Asset, const TScriptInterface<IAssetStreamingCallback>& Callback, bool bAlreadyLoaded)
+void UAssetStreamingSubsystem::HandleAssetLoaded(const TSoftObjectPtr<UObject>& Asset, bool bAlreadyLoaded)
 {
-    if (Asset.IsValid() && Callback.GetObject() && Callback.GetObject()->IsValidLowLevel())
+    if (Asset.IsValid())
     {
-        IAssetStreamingCallback::Execute_OnAssetLoaded(Callback.GetObject(), Asset, bAlreadyLoaded);
+        OnAssetLoaded.Broadcast(Asset.Get(), bAlreadyLoaded);
     }
 }
-
-
