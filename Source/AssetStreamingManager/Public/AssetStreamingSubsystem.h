@@ -8,7 +8,6 @@
 #include "AssetStreamingHandle.h"
 #include "AssetStreamingSubsystem.generated.h"
 
-typedef TArray<FAssetHandleStruct> FAssetHandleArray;
 typedef TArray<TSharedRef<FStreamableHandle>> FStreamableHandleArray;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAssetLoadedBP, UObject*, LoadedAsset, bool, bAlreadyLoaded);
@@ -23,11 +22,14 @@ public:
 protected:
     FStreamableManager StreamableManager;
 
-    TMap<FGuid, FAssetHandleArray> RegisteredAssets;
+    TMap<FGuid, FAssetHandleStruct> RegisteredAssets;
     TMap<FSoftObjectPath, int32> AssetRequestCount;
     TMap<FSoftObjectPath, TSharedPtr<FStreamableHandle>> KeepAlive;
     TMap<FSoftObjectPath, float> UnloadTimers;
-private:
+
+    TArray<FAssetRequest> DefaultQueue;
+    TArray<FAssetRequest> PriorityQueue;
+    int32 MaxPriorityQueueSize = 32;
 
 public:
     UPROPERTY(BlueprintAssignable, Category = "Asset Streaming Events")
@@ -43,10 +45,11 @@ public:
     ASSETSTREAMINGMANAGER_API virtual TStatId GetStatId() const override;
     ASSETSTREAMINGMANAGER_API virtual bool IsTickable() const override { return true; }
 
-    ASSETSTREAMINGMANAGER_API bool RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId);
-    ASSETSTREAMINGMANAGER_API bool RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetPaths, TArray<FGuid>& OutRequestId);
+    ASSETSTREAMINGMANAGER_API bool RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId, const int32& Priority = 0);
+    ASSETSTREAMINGMANAGER_API bool RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetPaths, TArray<FGuid>& OutRequestId, const int32& Priority = 0);
+	
     ASSETSTREAMINGMANAGER_API bool ReleaseAsset(FGuid& RequestId);
-
+	ASSETSTREAMINGMANAGER_API bool ReleaseAssets(const TArray<FGuid>& RequestIds);
     // Blueprint
 protected:
     UFUNCTION(BlueprintCallable, DisplayName = "Request Assets", Category = "Asset Streaming Functions")

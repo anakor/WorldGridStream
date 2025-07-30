@@ -30,3 +30,14 @@ public:
 	FSoftObjectPath Asset;
 	TSharedPtr<FStreamableHandle> Handle;
 };
+
+struct FAssetRequest
+{
+	FSoftObjectPath AssetPath;
+	FGuid RequestId;
+	int32 Priority; // 0: default queue, 0 ÃÊ°ú: priority queue
+
+	FAssetRequest(const FSoftObjectPath& InPath, const FGuid& InId, int32 InPriority = -1)
+		: AssetPath(InPath), RequestId(InId), Priority(InPriority) {
+	}
+};

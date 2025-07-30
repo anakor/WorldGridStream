@@ -6,7 +6,7 @@
 #include "UObject/SoftObjectPtr.h"
 
 DECLARE_CYCLE_STAT(TEXT("AssetStreamingManager Tick"), STAT_ASMTick, STATGROUP_AssetStreamingManager);
-
+BEGIN_FUNCTION_BUILD_OPTIMIZATION
 namespace StreamingManager
 {
     float UnloadDelaySeconds = 5.0f;
@@ -26,6 +26,12 @@ namespace StreamingManager
         , MaxAssetsToLoadPerTick
         , TEXT("Maximum number of assets that can be loaded at once per tick")
         , ECVF_ReadOnly);
+
+	bool bForceLoadComplete = false;
+    FAutoConsoleVariable CVarbForceLoadComplete(TEXT("StreamingManager.bForceImmediateLoadComplete")
+        , bForceLoadComplete
+        , TEXT("Force handle completion for test")
+        , ECVF_Default);
 }
 
 void UAssetStreamingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -82,6 +88,26 @@ void UAssetStreamingSubsystem::Tick(float DeltaTime)
             }
         }
     }
+
+	int32 AssetsLoaded = 0;
+
+    // PriorityQueue
+    while (PriorityQueue.Num() > 0 && AssetsLoaded < StreamingManager::MaxAssetsToLoadPerTick)
+    {
+        FAssetRequest Request = PriorityQueue[0];
+        PriorityQueue.RemoveAt(0);
+        StreamAsset(Request.AssetPath, Request.RequestId);
+        ++AssetsLoaded;
+    }
+
+    // DefaultQueue
+    while (DefaultQueue.Num() > 0 && AssetsLoaded < StreamingManager::MaxAssetsToLoadPerTick)
+    {
+        FAssetRequest Request = DefaultQueue[0];
+        DefaultQueue.RemoveAt(0);
+        StreamAsset(Request.AssetPath, Request.RequestId);
+        ++AssetsLoaded;
+    }
 }
 
 TStatId UAssetStreamingSubsystem::GetStatId() const
@@ -89,15 +115,33 @@ TStatId UAssetStreamingSubsystem::GetStatId() const
     RETURN_QUICK_DECLARE_CYCLE_STAT(UAssetStreamingSubsystem, STATGROUP_Tickables);
 }
 
-bool UAssetStreamingSubsystem::RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId)
+bool UAssetStreamingSubsystem::RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId, const int32& Priority)
 {
     OutRequestId = FGuid::NewGuid();
-    StreamAsset(AssetPath, OutRequestId);
+    FAssetRequest Request(AssetPath, OutRequestId, Priority);
+
+    if (Priority == 0)
+    {
+        // Default queue
+        DefaultQueue.Add(Request);
+    }
+    else
+    {
+        // Priority queue
+        if (PriorityQueue.Num() >= MaxPriorityQueueSize)
+        {
+            // sort, if queue is full, remove the lowest priority
+            PriorityQueue.Sort([](const FAssetRequest& A, const FAssetRequest& B) { return A.Priority > B.Priority; });
+            PriorityQueue.RemoveAt(PriorityQueue.Num() - 1);
+        }
+        PriorityQueue.Add(Request);
+        PriorityQueue.Sort([](const FAssetRequest& A, const FAssetRequest& B) { return A.Priority > B.Priority; });
+    }
 
     return OutRequestId.IsValid();
 }
 
-bool UAssetStreamingSubsystem::RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetPaths, TArray<FGuid>& OutRequestId)
+bool UAssetStreamingSubsystem::RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetPaths, TArray<FGuid>& OutRequestId, const int32& Priority)
 {
     if (AssetPaths.Num() == 0)
     {
@@ -109,7 +153,26 @@ bool UAssetStreamingSubsystem::RequestAssetsStreaming(const TArray<FSoftObjectPa
     {
 		FGuid RequestId = FGuid::NewGuid();
 		OutRequestId.Add(RequestId);
-        StreamAsset(AssetPath, RequestId);
+
+		FAssetRequest Request(AssetPath, RequestId, Priority);
+
+        if(Priority == 0)
+        {
+            // Default queue
+            DefaultQueue.Add(Request);
+        }
+        else
+        {
+            // Priority queue
+            if (PriorityQueue.Num() >= MaxPriorityQueueSize)
+            {
+				// sort, if queue is full, remove the lowest priority
+                PriorityQueue.Sort([](const FAssetRequest& A, const FAssetRequest& B) { return A.Priority > B.Priority; });
+                PriorityQueue.RemoveAt(PriorityQueue.Num() - 1);
+            }
+            PriorityQueue.Add(Request);
+            PriorityQueue.Sort([](const FAssetRequest& A, const FAssetRequest& B) { return A.Priority > B.Priority; });
+		}
     }
 
     return true;
@@ -122,48 +185,46 @@ bool UAssetStreamingSubsystem::ReleaseAsset(FGuid& RequestId)
         RequestId.Invalidate();
         return false;
     }
+    const FSoftObjectPath Path = RegisteredAssets[RequestId].Asset;
+    const TSharedPtr<FStreamableHandle> Handle = RegisteredAssets[RequestId].Handle;
 
-    FAssetHandleArray& Assets = RegisteredAssets[RequestId];
-
-    for (int32 i = Assets.Num() - 1; i >= 0; --i)
+    if (!AssetRequestCount.Contains(Path))
     {
-        const FSoftObjectPath Path = Assets[i].Asset;
+        return false;
+    }
 
-        if (!AssetRequestCount.Contains(Path)) continue;
+    AssetRequestCount[Path]--;
+    const bool bKeepAlive = KeepAlive.Contains(Path) && KeepAlive[Path] == Handle;
 
-        AssetRequestCount[Path]--;
+    if (AssetRequestCount[Path] == 0)
+    {
+        AssetRequestCount.Remove(Path);
+    }
 
-        if (AssetRequestCount[Path] > 0)
-        {
-            Assets.RemoveAt(i);
-        }
-        else
-        {
-            AssetRequestCount.Remove(Path);
-        }
-
-        if (!KeepAlive.Contains(Path) || KeepAlive[Path] != Assets[i].Handle)
-        {
-            if (Assets[i].Handle.IsValid())
-            {
-                Assets[i].Handle->CancelHandle();
-            }
-        }
+    if (!bKeepAlive && Handle.IsValid())
+    {
+        Handle->CancelHandle();
     }
 
     RegisteredAssets.Remove(RequestId);
 
-    for (const FAssetHandleStruct& AssetHandleStruct : Assets)
+    if (!UnloadTimers.Contains(Path))
     {
-        const FSoftObjectPath Path = AssetHandleStruct.Asset;
-        if (!UnloadTimers.Contains(Path))
-        {
-            UnloadTimers.Add(Path, StreamingManager::CVarUnloadDelaySeconds->GetFloat());
-        }
+        UnloadTimers.Add(Path, StreamingManager::CVarUnloadDelaySeconds->GetFloat());
     }
 
     RequestId.Invalidate();
     return true;
+}
+
+bool UAssetStreamingSubsystem::ReleaseAssets(const TArray<FGuid>& RequestIds)
+{
+    bool bAllReleased = true;
+    for (FGuid RequestId : RequestIds)
+    {
+        bAllReleased &= ReleaseAsset(RequestId);
+    }
+    return bAllReleased;
 }
 
 bool UAssetStreamingSubsystem::K2_RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetsToStream, TArray<FGuid>& OutAssetRequestId)
@@ -209,7 +270,7 @@ void UAssetStreamingSubsystem::StreamAsset(const FSoftObjectPath& AssetPath, con
         AssetPath, OnLoaded, FStreamableManager::DefaultAsyncLoadPriority, true);
 
     RegisteredAssets.FindOrAdd(RequestId);
-    RegisteredAssets[RequestId].Add(FAssetHandleStruct(AssetPath, Handle));
+    RegisteredAssets[RequestId] = FAssetHandleStruct(AssetPath, Handle);
 
     if (!KeepAlive.Contains(AssetPath))
     {
@@ -217,6 +278,13 @@ void UAssetStreamingSubsystem::StreamAsset(const FSoftObjectPath& AssetPath, con
     }
 
     AssetRequestCount.FindOrAdd(AssetPath)++;
+
+#if WITH_EDITOR
+    if(StreamingManager::CVarbForceLoadComplete->GetBool())
+    {
+        HandleAssetLoaded(AssetPath, true);
+	}
+#endif
 }
 
 void UAssetStreamingSubsystem::HandleAssetLoaded(const FSoftObjectPath& AssetPath, bool bAlreadyLoaded)
@@ -227,3 +295,4 @@ void UAssetStreamingSubsystem::HandleAssetLoaded(const FSoftObjectPath& AssetPat
         OnAssetLoaded.Broadcast(LoadedAsset, bAlreadyLoaded);
     }
 }
+END_FUNCTION_BUILD_OPTIMIZATION
