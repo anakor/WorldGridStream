@@ -6,7 +6,7 @@
 #include "UObject/SoftObjectPtr.h"
 
 DECLARE_CYCLE_STAT(TEXT("AssetStreamingManager Tick"), STAT_ASMTick, STATGROUP_AssetStreamingManager);
-BEGIN_FUNCTION_BUILD_OPTIMIZATION
+
 namespace StreamingManager
 {
     float UnloadDelaySeconds = 5.0f;
@@ -184,6 +184,29 @@ bool UAssetStreamingSubsystem::RequestAssetsStreaming(const TArray<FSoftObjectPa
     return true;
 }
 
+ASSETSTREAMINGMANAGER_API UObject* UAssetStreamingSubsystem::LoadAssetSync(const FSoftObjectPath& AssetPath)
+{
+    if (AssetPath.IsNull())
+    {
+        UE_LOG(LogAssetStreamingManager, Warning, TEXT("LoadAssetSync: AssetPath is null."));
+        return nullptr;
+    }
+
+    if (IsAsyncLoading())
+    {
+        UE_LOG(LogAssetStreamingManager, Warning, TEXT("LoadAssetSync: Attempted sync load during async loading phase."));
+    }
+
+    UObject* LoadedAsset = AssetPath.TryLoad();
+
+    if (!LoadedAsset)
+    {
+        UE_LOG(LogAssetStreamingManager, Warning, TEXT("LoadAssetSync: Failed to load asset '%s'."), *AssetPath.ToString());
+    }
+
+    return LoadedAsset;
+}
+
 bool UAssetStreamingSubsystem::ReleaseAsset(FGuid& RequestId)
 {
     if (!RequestId.IsValid() || !RegisteredAssets.Contains(RequestId))
@@ -301,4 +324,3 @@ void UAssetStreamingSubsystem::HandleAssetLoaded(const FSoftObjectPath& AssetPat
         OnAssetLoaded.Broadcast(LoadedAsset, bAlreadyLoaded);
     }
 }
-END_FUNCTION_BUILD_OPTIMIZATION

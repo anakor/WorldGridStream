@@ -53,6 +53,8 @@ public:
     ASSETSTREAMINGMANAGER_API bool RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId, const int32& Priority = 0);
     ASSETSTREAMINGMANAGER_API bool RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetPaths, TArray<FGuid>& OutRequestId, const int32& Priority = 0);
 	
+	ASSETSTREAMINGMANAGER_API UObject* LoadAssetSync(const FSoftObjectPath& AssetPath);
+
     ASSETSTREAMINGMANAGER_API bool ReleaseAsset(FGuid& RequestId);
 	ASSETSTREAMINGMANAGER_API bool ReleaseAssets(const TArray<FGuid>& RequestIds);
     // Blueprint

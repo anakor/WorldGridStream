@@ -50,7 +50,12 @@ bool FAssetStreamingSubsystem_BasicTest::RunTest(const FString& Parameters)
 
     Subsystem->OnAssetLoaded.RemoveDynamic(Helper, &UAssetStreamingTestHelper::OnAssetLoaded);
     
-    // 5. 해제 테스트
+    // 5. 동기 로드 테스트
+    UObject* Asset = Subsystem->LoadAssetSync(TestAssetPath);
+	bool bSyncLoaded = (Asset != nullptr);
+    TestTrue(TEXT("Sync Loading returns object"), bSyncLoaded);
+
+    // 6. 해제 테스트
     bool bReleased = Subsystem->ReleaseAsset(RequestId);
     TestTrue(TEXT("ReleaseAsset returns true"), bReleased);
 
