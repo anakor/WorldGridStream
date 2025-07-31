@@ -27,9 +27,12 @@ protected:
     TMap<FSoftObjectPath, TSharedPtr<FStreamableHandle>> KeepAlive;
     TMap<FSoftObjectPath, float> UnloadTimers;
 
+
+    static constexpr int32 PriorityGroupCount = 11;
+
     TArray<FAssetRequest> DefaultQueue;
-    TArray<FAssetRequest> PriorityQueue;
-    int32 MaxPriorityQueueSize = 32;
+    TArray<FAssetRequest> PriorityQueues[PriorityGroupCount];
+    int32 MaxPriorityQueueSize = 8;
 
 public:
     UPROPERTY(BlueprintAssignable, Category = "Asset Streaming Events")
@@ -44,6 +47,8 @@ public:
     ASSETSTREAMINGMANAGER_API virtual void Tick(float DeltaTime) override;
     ASSETSTREAMINGMANAGER_API virtual TStatId GetStatId() const override;
     ASSETSTREAMINGMANAGER_API virtual bool IsTickable() const override { return true; }
+
+    ASSETSTREAMINGMANAGER_API virtual int32 GetPriorityGroup(const int32 Priority);
 
     ASSETSTREAMINGMANAGER_API bool RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId, const int32& Priority = 0);
     ASSETSTREAMINGMANAGER_API bool RequestAssetsStreaming(const TArray<FSoftObjectPath>& AssetPaths, TArray<FGuid>& OutRequestId, const int32& Priority = 0);

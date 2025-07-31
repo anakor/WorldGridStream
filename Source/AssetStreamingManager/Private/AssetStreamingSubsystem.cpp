@@ -92,12 +92,15 @@ void UAssetStreamingSubsystem::Tick(float DeltaTime)
 	int32 AssetsLoaded = 0;
 
     // PriorityQueue
-    while (PriorityQueue.Num() > 0 && AssetsLoaded < StreamingManager::MaxAssetsToLoadPerTick)
+    for (int32 Bucket = PriorityGroupCount - 1; Bucket >= 0 && AssetsLoaded < StreamingManager::MaxAssetsToLoadPerTick; --Bucket)
     {
-        FAssetRequest Request = PriorityQueue[0];
-        PriorityQueue.RemoveAt(0);
-        StreamAsset(Request.AssetPath, Request.RequestId);
-        ++AssetsLoaded;
+        while (PriorityQueues[PriorityGroupCount].Num() > 0 && AssetsLoaded < StreamingManager::MaxAssetsToLoadPerTick)
+        {
+            FAssetRequest Request = PriorityQueues[Bucket][0];
+            PriorityQueues[Bucket].RemoveAt(0);
+            StreamAsset(Request.AssetPath, Request.RequestId);
+            ++AssetsLoaded;
+        }
     }
 
     // DefaultQueue
@@ -115,6 +118,11 @@ TStatId UAssetStreamingSubsystem::GetStatId() const
     RETURN_QUICK_DECLARE_CYCLE_STAT(UAssetStreamingSubsystem, STATGROUP_Tickables);
 }
 
+ASSETSTREAMINGMANAGER_API int32 UAssetStreamingSubsystem::GetPriorityGroup(const int32 Priority)
+{
+    return FMath::Clamp(Priority / 10, 0, PriorityGroupCount - 1);
+}
+
 bool UAssetStreamingSubsystem::RequestAssetStreaming(const FSoftObjectPath& AssetPath, FGuid& OutRequestId, const int32& Priority)
 {
     OutRequestId = FGuid::NewGuid();
@@ -127,15 +135,14 @@ bool UAssetStreamingSubsystem::RequestAssetStreaming(const FSoftObjectPath& Asse
     }
     else
     {
+		int32 PriorityGroup = GetPriorityGroup(Priority);
         // Priority queue
-        if (PriorityQueue.Num() >= MaxPriorityQueueSize)
+        if (PriorityQueues[PriorityGroup].Num() >= MaxPriorityQueueSize)
         {
             // sort, if queue is full, remove the lowest priority
-            PriorityQueue.Sort([](const FAssetRequest& A, const FAssetRequest& B) { return A.Priority > B.Priority; });
-            PriorityQueue.RemoveAt(PriorityQueue.Num() - 1);
+            PriorityQueues[PriorityGroup].RemoveAt(PriorityQueues[PriorityGroup].Num() - 1);
         }
-        PriorityQueue.Add(Request);
-        PriorityQueue.Sort([](const FAssetRequest& A, const FAssetRequest& B) { return A.Priority > B.Priority; });
+        PriorityQueues[PriorityGroup].Add(Request);
     }
 
     return OutRequestId.IsValid();
@@ -163,16 +170,15 @@ bool UAssetStreamingSubsystem::RequestAssetsStreaming(const TArray<FSoftObjectPa
         }
         else
         {
+            int32 PriorityGroup = GetPriorityGroup(Priority);
             // Priority queue
-            if (PriorityQueue.Num() >= MaxPriorityQueueSize)
+            if (PriorityQueues[PriorityGroup].Num() >= MaxPriorityQueueSize)
             {
-				// sort, if queue is full, remove the lowest priority
-                PriorityQueue.Sort([](const FAssetRequest& A, const FAssetRequest& B) { return A.Priority > B.Priority; });
-                PriorityQueue.RemoveAt(PriorityQueue.Num() - 1);
+                // sort, if queue is full, remove the lowest priority
+                PriorityQueues[PriorityGroup].RemoveAt(PriorityQueues[PriorityGroup].Num() - 1);
             }
-            PriorityQueue.Add(Request);
-            PriorityQueue.Sort([](const FAssetRequest& A, const FAssetRequest& B) { return A.Priority > B.Priority; });
-		}
+            PriorityQueues[PriorityGroup].Add(Request);
+        }
     }
 
     return true;
